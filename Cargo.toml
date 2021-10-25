@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 headless_chrome = { git = "https://github.com/atroche/rust-headless-chrome" }
+subprocess = "0.2.8"
 x11 = "2.19.1"
 x11rb = { git = "https://github.com/psychon/x11rb" }
 
