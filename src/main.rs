@@ -1,3 +1,4 @@
+use gst::prelude::*;
 use headless_chrome::{protocol::page::ScreenshotFormat, Browser, LaunchOptions};
 use std::collections::HashMap;
 use std::error::Error;
@@ -59,6 +60,38 @@ fn launch_xvfb(display: &str, size: (u32, u32)) -> Result<Exec, Box<dyn Error>> 
     )))
 }
 
+fn launch_gstreamer(display: &str, pulse_server: &str) -> Result<gst::Pipeline, Box<dyn Error>> {
+    let pipeline = gst::Pipeline::new(Some("debug"));
+
+    let ximagesrc = gst::ElementFactory::make("ximagesrc", None)?;
+    ximagesrc.set_property_from_str("display-name", &display);
+
+    let video_queue = gst::ElementFactory::make("queue", None)?;
+    let glimagesink = gst::ElementFactory::make("glimagesink", None)?;
+
+    let pulsesrc = gst::ElementFactory::make("pulsesrc", None)?;
+    pulsesrc.set_property_from_str("server", &pulse_server);
+
+    let audio_queue = gst::ElementFactory::make("queue", None)?;
+    let autoaudiosink = gst::ElementFactory::make("autoaudiosink", None)?;
+
+    pipeline.add_many(&[
+        &ximagesrc,
+        &video_queue,
+        &glimagesink,
+        &pulsesrc,
+        &audio_queue,
+        &autoaudiosink,
+    ])?;
+
+    gst::Element::link_many(&[&ximagesrc, &video_queue, &glimagesink])?;
+    gst::Element::link_many(&[&pulsesrc, &audio_queue, &autoaudiosink])?;
+
+    pipeline.set_state(gst::State::Playing)?;
+
+    Ok(pipeline)
+}
+
 fn list_window_classes(display: &str) -> Result<(), Box<dyn Error>> {
     let (conn, screen_num) = x11rb::connect(Some(display))?;
 
@@ -109,8 +142,10 @@ fn list_window_classes(display: &str) -> Result<(), Box<dyn Error>> {
 
 fn main() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::init();
+    gst::init()?;
 
     let display: &str = ":1234";
+    let pulse_server: &str = "tcp:localhost:5546";
 
     let (wait_xvfb_tx, wait_xvfb_rx) = channel();
     std::thread::spawn(move || {
@@ -140,6 +175,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("launching chrome");
     let _b = launch_chrome_browser(display)?;
     list_window_classes(display)?;
+
+    println!("launching gstreamer");
+    let _pipe = launch_gstreamer(display, pulse_server)?;
 
     loop {}
 
