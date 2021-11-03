@@ -1,15 +1,22 @@
 use gst::prelude::*;
+use glib::prelude::*;
 use headless_chrome::{protocol::page::ScreenshotFormat, Browser, LaunchOptions};
+use log::*;
 use std::collections::HashMap;
+use std::env::current_dir;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::result::Result;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, GetWindowAttributesReply};
+use enclose::enc;
+use futures::channel::mpsc::{self, channel};
+use futures::prelude::*;
 
-use std::sync::mpsc::channel;
 
-use subprocess::{CaptureData, Exec};
+
+//use subprocess::{CaptureData, Exec};
+use duct::{cmd, Expression, Handle};
 
 fn launch_chrome_browser(display: &str) -> Result<Browser, Box<dyn Error>> {
     let mut env = HashMap::new();
@@ -20,9 +27,8 @@ fn launch_chrome_browser(display: &str) -> Result<Browser, Box<dyn Error>> {
     let mut args = Vec::new();
     args.push(OsStr::new("--enable-audio-output"));
     args.push(OsStr::new("--autoplay-policy=no-user-gesture-required"));
-    args.push(OsStr::new("--disable-infobars"));
     args.push(OsStr::new("--kiosk"));
-    args.push(OsStr::new("--disable-automation"));
+    args.push(OsStr::new("--start-fullscreen"));
     println!("ENV: {:?}", env);
 
     let options = LaunchOptions::default_builder()
@@ -47,17 +53,39 @@ fn launch_chrome_browser(display: &str) -> Result<Browser, Box<dyn Error>> {
     Ok(browser)
 }
 
-fn launch_pulse() -> Result<Exec, Box<dyn Error>> {
-    Ok(Exec::shell(format!(
-        "dbus-run-session pulseaudio -n -F config/pulse.pa -vvv --disable-shm --use-pid-file=false --realtime=false"
-    )))
+fn launch_pulse() -> Result<Expression, Box<dyn Error>> {
+    Ok(cmd!(
+        "dbus-run-session",
+        "pulseaudio",
+        "-n",
+        "-F",
+        "config/pulse.pa",
+        "-vvv",
+        "--disable-shm",
+        "--use-pid-file=false",
+        "--realtime=false"
+    )
+    .dir(current_dir().unwrap()))
+
+    //Ok(Exec::shell(format!(
+    //    "dbus-run-session pulseaudio -n -F config/pulse.pa -vvv --disable-shm --use-pid-file=false --realtime=false"
+    //)))
 }
 
-fn launch_xvfb(display: &str, size: (u32, u32)) -> Result<Exec, Box<dyn Error>> {
-    Ok(Exec::shell(format!(
-        "Xvfb {} -screen 0 {}x{}x24",
-        display, size.0, size.1
-    )))
+fn launch_xvfb(display: &str, size: (u32, u32)) -> Result<Expression, Box<dyn Error>> {
+    Ok(cmd!(
+        "Xvfb",
+        display,
+        "-screen",
+        format!("{}", 0),
+        format!("{}x{}x24", size.0, size.1)
+    )
+    .dir(current_dir().unwrap()))
+
+    //Ok(Exec::shell(format!(
+    //    "Xvfb {} -screen 0 {}x{}x24",
+    //    display, size.0, size.1
+    //)))
 }
 
 fn launch_gstreamer(display: &str, pulse_server: &str) -> Result<gst::Pipeline, Box<dyn Error>> {
@@ -65,9 +93,17 @@ fn launch_gstreamer(display: &str, pulse_server: &str) -> Result<gst::Pipeline, 
 
     let ximagesrc = gst::ElementFactory::make("ximagesrc", None)?;
     ximagesrc.set_property_from_str("display-name", &display);
+    ximagesrc.set_property_from_str("show-pointer", "false");
+
+    let caps = gst::Caps::builder("video/x-raw")
+            .field("framerate", gst::Fraction::new(60, 1))
+            .build();
+    let caps_filter = gst::ElementFactory::make("capsfilter", None)?;
+    caps_filter.set_property("caps", &caps)?;
 
     let video_queue = gst::ElementFactory::make("queue", None)?;
     let glimagesink = gst::ElementFactory::make("glimagesink", None)?;
+    glimagesink.set_property_from_str("sync", "false");
 
     let pulsesrc = gst::ElementFactory::make("pulsesrc", None)?;
     pulsesrc.set_property_from_str("server", &pulse_server);
@@ -75,8 +111,11 @@ fn launch_gstreamer(display: &str, pulse_server: &str) -> Result<gst::Pipeline, 
     let audio_queue = gst::ElementFactory::make("queue", None)?;
     let autoaudiosink = gst::ElementFactory::make("autoaudiosink", None)?;
 
+    autoaudiosink.set_property_from_str("sync", "false");
+
     pipeline.add_many(&[
         &ximagesrc,
+        &caps_filter,
         &video_queue,
         &glimagesink,
         &pulsesrc,
@@ -84,7 +123,7 @@ fn launch_gstreamer(display: &str, pulse_server: &str) -> Result<gst::Pipeline, 
         &autoaudiosink,
     ])?;
 
-    gst::Element::link_many(&[&ximagesrc, &video_queue, &glimagesink])?;
+    gst::Element::link_many(&[&ximagesrc, &caps_filter, &video_queue, &glimagesink])?;
     gst::Element::link_many(&[&pulsesrc, &audio_queue, &autoaudiosink])?;
 
     pipeline.set_state(gst::State::Playing)?;
@@ -140,46 +179,85 @@ fn list_window_classes(display: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn message_handler(loop_: glib::MainLoop, bus: gst::Bus, mut tx: mpsc::Sender<bool>) {
+    let mut messages = bus.stream();
+
+    while let Some(msg) = messages.next().await {
+        use gst::MessageView;
+
+        // Determine whether we want to quit: on EOS or error message
+        // we quit, otherwise simply continue.
+        match msg.view() {
+            MessageView::Eos(..) => { tx.start_send(true); },
+            MessageView::Error(err) => {
+                println!(
+                    "Error from {:?}: {} ({:?})",
+                    err.src().map(|s| s.path_string()),
+                    err.error(),
+                    err.debug()
+                );
+            }
+            _ => (),
+        }
+    }
+}
+
+
+
+
 fn main() -> Result<(), Box<dyn Error>> {
+    let ctx = glib::MainContext::default();
+    ctx.push_thread_default();
+    let main_loop = glib::MainLoop::new(Some(&ctx), false);
+
     pretty_env_logger::init();
     gst::init()?;
 
     let display: &str = ":1234";
     let pulse_server: &str = "tcp:localhost:5546";
 
-    let (wait_xvfb_tx, wait_xvfb_rx) = channel();
-    std::thread::spawn(move || {
-        println!("launching xvfb");
-        let x = launch_xvfb(display, (1920, 1080)).unwrap();
+    println!("launching xvfb");
+    let x = launch_xvfb(display, (1920, 1080)).unwrap();
 
-        let mut pipe = x.popen().expect("error launching xvfb");
-        wait_xvfb_tx.send(true).unwrap();
-        pipe.wait().unwrap();
-    });
+    let mut xvfb_handle = x.start().expect("error launching xvfb");
+    println!("launching pulseaudio");
+    let x = launch_pulse().unwrap();
 
-    let (wait_pulse_tx, wait_pulse_rx) = channel();
-    std::thread::spawn(move || {
-        println!("launching pulseaudio");
-        let x = launch_pulse().unwrap();
-
-        let mut pipe = x.popen().expect("error launching xvfb");
-        wait_pulse_tx.send(true).unwrap();
-        pipe.wait().unwrap();
-    });
-
-    wait_xvfb_rx.recv().unwrap();
-    println!("xvfb launched");
-    wait_pulse_rx.recv().unwrap();
-    println!("pulse launched");
-
+    let mut pulse_handle = x.start().expect("error launching pulseaudio");
     println!("launching chrome");
-    let _b = launch_chrome_browser(display)?;
+    let browser_handle = launch_chrome_browser(display)?;
     list_window_classes(display)?;
 
     println!("launching gstreamer");
-    let _pipe = launch_gstreamer(display, pulse_server)?;
+    let recorder = launch_gstreamer(display, pulse_server)?;
+    let (recorder_tx, mut recorder_rx) = channel::<bool>(0);
 
-    loop {}
+
+    let bus = recorder.bus().unwrap();
+    ctx.spawn_local(message_handler(main_loop.clone(), bus, recorder_tx));
+
+    glib::timeout_add(60000, enc!( (main_loop) move || {
+        println!("stopping gstreamer: sending gst::event::Eos");
+        recorder.send_event(gst::event::Eos::new());
+
+        ctx.block_on(async { recorder_rx.next().await });
+        println!("gstreamer pipeline flushed");
+        xvfb_handle.kill().unwrap();
+        println!("xvfb killed");
+        pulse_handle.kill().unwrap();
+        println!("pulse killed");
+
+        main_loop.quit();
+
+        glib::Continue(false)
+    }));
+
+    
+    //    ctrlc::set_handler(move || {
+    //        cleanup();
+    //    })?;
+
+    main_loop.run();
 
     Ok(())
 }
