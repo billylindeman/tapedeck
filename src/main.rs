@@ -11,6 +11,7 @@ use std::ffi::OsStr;
 use std::io::stdin;
 use std::result::Result;
 use std::sync::Arc;
+use std::time::Duration;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, GetWindowAttributesReply};
 
@@ -37,6 +38,7 @@ fn launch_chrome_browser(
         .headless(false)
         .window_size(Some((1920, 1080)))
         .sandbox(false)
+        .idle_browser_timeout(Duration::from_secs(600))
         .process_envs(Some(env))
         .args(args)
         .build()?;
@@ -284,7 +286,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     //let mut recording_url = String::new();
     //stdin().read_line(&mut recording_url)?;
     //
-    let recording_url = "https://dogfood.tandem.chat/web/recording?call=%7B%22host%22%3A%22wss%3A%2F%2Fsfu.dogfood.tandem.chat%22%2C%22id%22%3A%22ce533b2c-0d0b-4f39-add6-adcd85afeef6%22%2C%22ionToken%22%3A%22eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJyaWQiOiJjZTUzM2IyYy0wZDBiLTRmMzktYWRkNi1hZGNkODVhZmVlZjYiLCJzaWQiOiJjZTUzM2IyYy0wZDBiLTRmMzktYWRkNi1hZGNkODVhZmVlZjYifQ.xLvXI-iCSz7buyssqnQoOD3QdDa-Mqw32bMa8P9aM-4g-aQI41Nq_xmO1_-RMS8CZC6vsKwGh-6fzu2Lip9ehw%22%2C%22private%22%3Afalse%2C%22props%22%3A%7B%22id%22%3A%227c780b71-6c26-4cbd-a037-40d5540a62bd%22%2C%22quick%22%3Afalse%2C%22title%22%3A%22Standup%20in%20Tandem%20%F0%9F%9A%A5%22%2C%22type%22%3A%22meeting%22%7D%2C%22service%22%3A%22ion-sfu%22%2C%22teamId%22%3A%2273b01c4f-6ebf-437b-994f-0377e3101c7a%22%7D";
+    let recording_url = "";
 
     let ctx = glib::MainContext::default();
     ctx.push_thread_default();
