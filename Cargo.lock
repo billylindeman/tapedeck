@@ -611,7 +611,7 @@ dependencies = [
 [[package]]
 name = "headless_chrome"
 version = "0.9.0"
-source = "git+https://github.com/billylindeman/rust-headless-chrome#f2789fb5dfcda65afbf542283639d7213e46e9d3"
+source = "git+https://github.com/billylindeman/rust-headless-chrome#ebc4ed382bf102e71d1ece81f569cf2a22762927"
 dependencies = [
  "base64 0.10.1",
  "derive_builder",
