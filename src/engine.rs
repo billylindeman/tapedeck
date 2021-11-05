@@ -35,13 +35,11 @@ pub struct EngineConfig {
     pub encode_rtmp: Option<String>,
 
     pub glib_ctx: glib::MainContext,
-    pub glib_loop: glib::MainLoop,
 }
 
 pub struct Engine {
     id: u32,
     ctx: glib::MainContext,
-    mainloop: glib::MainLoop,
     xvfb: Popen,
     pulse: Popen,
     browser: Browser,
@@ -75,16 +73,12 @@ impl Engine {
         let (encode_eos_tx, encode_eos_rx) = mpsc::channel::<bool>(1);
 
         let encode_bus = gst_encode.bus().unwrap();
-        cfg.glib_ctx.spawn_local(message_handler(
-            cfg.glib_loop.clone(),
-            encode_bus,
-            encode_eos_tx,
-        ));
+        cfg.glib_ctx
+            .spawn(message_handler(encode_bus, encode_eos_tx));
 
         Ok(Engine {
             id: cfg.id,
             ctx: cfg.glib_ctx,
-            mainloop: cfg.glib_loop,
             xvfb: xvfb,
             pulse: pulse,
             browser: browser,
@@ -104,7 +98,7 @@ impl Engine {
     pub fn stop(&mut self) -> Result<(), Error> {
         let rx = &mut self.gst_encode_eos_rx;
         // End of stream handler
-        info!("send eos");
+        info!("[Engine({})] send eos", self.id);
         self.gst_encode.send_event(gst::event::Eos::new());
         self.ctx.block_on(async {
             rx.next().await;
@@ -114,8 +108,12 @@ impl Engine {
         self.gst_debug.set_state(gst::State::Null)?;
         self.gst_encode.set_state(gst::State::Null)?;
 
-        self.xvfb.kill().unwrap();
-        self.pulse.kill().unwrap();
+        self.xvfb.terminate()?;
+        self.xvfb.wait()?;
+        info!("killed xvfb");
+        self.pulse.terminate()?;
+        self.pulse.wait()?;
+        info!("killed pulse");
 
         Ok(())
     }
@@ -154,10 +152,6 @@ fn launch_chromium_browser(
 
     // Navigate to wikipedia
     tab.navigate_to(recording_url)?;
-
-    // Wait for network/javascript/dom to make the search-box available
-    // and click it.
-    // tab.wait_for_element("input#searchInput")?.click()?;
     tab.wait_until_navigated()?;
 
     Ok((browser, tab))
@@ -165,11 +159,14 @@ fn launch_chromium_browser(
 
 fn launch_pulse(id: u32) -> Result<Exec, Error> {
     Ok(Exec::shell(format!(
-        "dbus-run-session pulseaudio -n -F config/pulse.pa \
+        "dbus-run-session pulseaudio -n \
         -vvv \
+        --system=false \
+        --daemonize=false \
         --disable-shm \
         --use-pid-file=false \
         --realtime=false \
+        --load=\"module-null-sink sink_name=loopback\" \
         --load=\"module-native-protocol-tcp port=1{:0>4} auth-anonymous=1\" \
         ",
         id
@@ -346,7 +343,7 @@ fn x11_list_window_classes(display: &str) -> Result<(), Error> {
     Ok(())
 }
 
-async fn message_handler(loop_: glib::MainLoop, bus: gst::Bus, mut tx: mpsc::Sender<bool>) {
+async fn message_handler(bus: gst::Bus, mut tx: mpsc::Sender<bool>) {
     let mut messages = bus.stream();
 
     while let Some(msg) = messages.next().await {
@@ -356,7 +353,8 @@ async fn message_handler(loop_: glib::MainLoop, bus: gst::Bus, mut tx: mpsc::Sen
         // we quit, otherwise simply continue.
         match msg.view() {
             MessageView::Eos(..) => {
-                tx.start_send(true);
+                tx.start_send(true).unwrap();
+                return;
             }
             MessageView::Error(err) => {
                 info!(

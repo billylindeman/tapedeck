@@ -2251,6 +2251,7 @@ dependencies = [
  "serde",
  "serde_json",
  "subprocess",
+ "tokio",
  "url 2.2.2",
  "x11",
  "x11rb",
