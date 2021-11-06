@@ -35,6 +35,9 @@ pub struct EngineConfig {
     #[builder(default = "None")]
     pub encode_rtmp: Option<String>,
 
+    #[builder(default = "false")]
+    pub gst_debug: bool,
+
     pub glib_ctx: glib::MainContext,
 }
 
@@ -47,7 +50,7 @@ pub struct Engine {
     browser: Option<Browser>,
     gst_encode: gst::Pipeline,
     gst_encode_eos_rx: mpsc::Receiver<bool>,
-    gst_debug: gst::Pipeline,
+    gst_debug: Option<gst::Pipeline>,
 }
 
 impl Engine {
@@ -69,7 +72,10 @@ impl Engine {
         let (browser, tab) = launch_chromium_browser(display, pulse_server, &cfg.url)?;
 
         info!("[Engine({})] Launching Gstreamer Debug", cfg.id);
-        let gst_debug = launch_gstreamer_debug(display, pulse_server)?;
+        let gst_debug = match cfg.gst_debug {
+            true => Some(launch_gstreamer_debug(display, pulse_server)?),
+            false => None,
+        };
 
         info!("[Engine({})] Launching Gstreamer Encoder", cfg.id);
         let filepath = format!("{}/recording-{}.mp4", cfg.encode_dir.unwrap(), cfg.id);
@@ -111,7 +117,9 @@ impl Engine {
         });
 
         info!("eos received on bus..gst finished");
-        self.gst_debug.set_state(gst::State::Null)?;
+        if let Some(gst_debug) = &self.gst_debug {
+            gst_debug.set_state(gst::State::Null)?;
+        }
         self.gst_encode.set_state(gst::State::Null)?;
 
         let _ = self.browser.take();

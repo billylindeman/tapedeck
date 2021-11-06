@@ -72,6 +72,7 @@ async fn start(
         .id(id)
         .size((1920, 1080))
         .url("https://www.youtube.com/watch?v=JIx_ILapASY".to_owned())
+        .gst_debug(false)
         .encode_dir(Some("/tmp".to_string()))
         .build()
         .unwrap();
