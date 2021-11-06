@@ -53,6 +53,12 @@ pub struct Engine {
     gst_debug: Option<gst::Pipeline>,
 }
 
+impl Drop for Engine {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
+}
+
 impl Engine {
     pub fn new(cfg: EngineConfig) -> Result<Engine, Error> {
         let display: &str = &format!(":1{:0>4}", cfg.id);
@@ -306,7 +312,7 @@ fn launch_gstreamer_encode(
     let video_queue = gst::ElementFactory::make("queue", None)?;
     let video_convert = gst::ElementFactory::make("videoconvert", None)?;
     let video_enc = gst::ElementFactory::make("x264enc", None)?;
-    video_enc.set_property_from_str("speed-preset", "fast");
+    video_enc.set_property_from_str("speed-preset", "ultrafast");
 
     let mux = gst::ElementFactory::make("mp4mux", None)?;
 
