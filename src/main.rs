@@ -1,8 +1,8 @@
 use enclose::enc;
 use futures::channel::oneshot;
 use rocket::State;
+use std::collections::HashMap;
 use std::error::Error;
-use std::io::{BufRead, BufReader};
 use tokio::runtime::Runtime;
 
 mod engine;
@@ -14,30 +14,31 @@ extern crate derive_builder;
 
 pub enum ManagerEvent {
     EngineSpawn(oneshot::Sender<Result<(), String>>, engine::EngineConfig),
-    EngineStop(oneshot::Sender<Result<(), String>>),
+    EngineStop(oneshot::Sender<Result<(), String>>, u32),
 }
 
 struct Manager {}
 
 impl Manager {
     fn new() -> glib::Sender<ManagerEvent> {
-        let mut engines = Vec::new();
+        let mut engines = HashMap::new();
 
         let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
 
         rx.attach(None, move |msg| {
             match msg {
                 ManagerEvent::EngineSpawn(res, cfg) => {
+                    let id = cfg.id;
                     let eng = engine::Engine::new(cfg).unwrap();
-                    engines.push(eng);
+                    engines.insert(id, eng);
                     res.send(Ok(())).unwrap();
                 }
-                ManagerEvent::EngineStop(res) => {
-                    if engines.len() == 0 {
-                        res.send(Err(String::from("error: no engines running")))
+                ManagerEvent::EngineStop(res, key) => match engines.remove(&key) {
+                    None => {
+                        res.send(Err(format!("error: no engine found key={}", &key)))
                             .unwrap();
-                    } else {
-                        let mut e = engines.pop().unwrap();
+                    }
+                    Some(mut e) => {
                         if let Err(_) = e.stop() {
                             res.send(Err(String::from("error: couldn't stop engine")))
                                 .unwrap();
@@ -45,7 +46,7 @@ impl Manager {
                             res.send(Ok(())).unwrap();
                         }
                     }
-                }
+                },
             };
 
             glib::Continue(true)
@@ -60,11 +61,15 @@ fn index() -> &'static str {
     "hello"
 }
 
-#[get("/start")]
-async fn start(ctx: &State<glib::MainContext>, mgr: &State<glib::Sender<ManagerEvent>>) -> String {
+#[get("/start/<id>")]
+async fn start(
+    ctx: &State<glib::MainContext>,
+    mgr: &State<glib::Sender<ManagerEvent>>,
+    id: u32,
+) -> String {
     let cfg = engine::EngineConfigBuilder::default()
         .glib_ctx((*ctx).clone())
-        .id(1)
+        .id(id)
         .size((1920, 1080))
         .url("https://www.youtube.com/watch?v=JIx_ILapASY".to_owned())
         .encode_dir(Some("/tmp".to_string()))
@@ -82,10 +87,10 @@ async fn start(ctx: &State<glib::MainContext>, mgr: &State<glib::Sender<ManagerE
     "started".to_owned()
 }
 
-#[get("/stop")]
-async fn stop(mgr: &State<glib::Sender<ManagerEvent>>) -> String {
+#[get("/stop/<id>")]
+async fn stop(mgr: &State<glib::Sender<ManagerEvent>>, id: u32) -> String {
     let (tx, rx) = oneshot::channel();
-    mgr.send(ManagerEvent::EngineStop(tx)).unwrap();
+    mgr.send(ManagerEvent::EngineStop(tx, id)).unwrap();
     if let Err(err) = rx.await.unwrap() {
         return err;
     }
