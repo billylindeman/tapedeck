@@ -248,7 +248,7 @@ fn launch_gstreamer_debug(display: &str, pulse_server: &str) -> Result<gst::Pipe
     ximagesrc.set_property_from_str("show-pointer", "false");
 
     let caps = gst::Caps::builder("video/x-raw")
-        .field("framerate", gst::Fraction::new(60, 1))
+        .field("framerate", gst::Fraction::new(30, 1))
         .build();
     let caps_filter = gst::ElementFactory::make("capsfilter", None)?;
     caps_filter.set_property("caps", &caps)?;
@@ -298,7 +298,7 @@ fn launch_gstreamer_encode(
     ximagesrc.set_property_from_str("use-damage", "false");
 
     let caps = gst::Caps::builder("video/x-raw")
-        .field("framerate", gst::Fraction::new(60, 1))
+        .field("framerate", gst::Fraction::new(30, 1))
         .build();
     let caps_filter = gst::ElementFactory::make("capsfilter", None)?;
     caps_filter.set_property("caps", &caps)?;
