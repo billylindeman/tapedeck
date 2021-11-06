@@ -1,9 +1,8 @@
 use enclose::enc;
-use std::error::Error;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
+use futures::channel::oneshot;
 use rocket::State;
+use std::error::Error;
+use std::io::{BufRead, BufReader};
 use tokio::runtime::Runtime;
 
 mod engine;
@@ -13,9 +12,47 @@ extern crate rocket;
 #[macro_use]
 extern crate derive_builder;
 
-struct DB {
-    ctx: glib::MainContext,
-    engines: Mutex<Vec<engine::Engine>>,
+pub enum ManagerEvent {
+    EngineSpawn(oneshot::Sender<Result<(), String>>, engine::EngineConfig),
+    EngineStop(oneshot::Sender<Result<(), String>>),
+}
+
+struct Manager {}
+
+impl Manager {
+    fn new() -> glib::Sender<ManagerEvent> {
+        let mut engines = Vec::new();
+
+        let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+
+        rx.attach(None, move |msg| {
+            match msg {
+                ManagerEvent::EngineSpawn(res, cfg) => {
+                    let eng = engine::Engine::new(cfg).unwrap();
+                    engines.push(eng);
+                    res.send(Ok(())).unwrap();
+                }
+                ManagerEvent::EngineStop(res) => {
+                    if engines.len() == 0 {
+                        res.send(Err(String::from("error: no engines running")))
+                            .unwrap();
+                    } else {
+                        let mut e = engines.pop().unwrap();
+                        if let Err(_) = e.stop() {
+                            res.send(Err(String::from("error: couldn't stop engine")))
+                                .unwrap();
+                        } else {
+                            res.send(Ok(())).unwrap();
+                        }
+                    }
+                }
+            };
+
+            glib::Continue(true)
+        });
+
+        tx
+    }
 }
 
 #[get("/")]
@@ -24,15 +61,9 @@ fn index() -> &'static str {
 }
 
 #[get("/start")]
-async fn start(db: &State<DB>) -> &'static str {
-    let mut engines = db.engines.lock().await;
-
-    if engines.len() > 0 {
-        return "error: already started";
-    }
-
+async fn start(ctx: &State<glib::MainContext>, mgr: &State<glib::Sender<ManagerEvent>>) -> String {
     let cfg = engine::EngineConfigBuilder::default()
-        .glib_ctx(db.ctx.clone())
+        .glib_ctx((*ctx).clone())
         .id(1)
         .size((1920, 1080))
         .url("https://www.youtube.com/watch?v=JIx_ILapASY".to_owned())
@@ -40,37 +71,35 @@ async fn start(db: &State<DB>) -> &'static str {
         .build()
         .unwrap();
 
-    info!("ENGINE STARTING");
+    let (tx, rx) = oneshot::channel();
 
-    engines.push(engine::Engine::new(cfg).unwrap());
+    mgr.send(ManagerEvent::EngineSpawn(tx, cfg)).unwrap();
 
-    info!("ENGINE STARTED");
+    if let Err(err) = rx.await.unwrap() {
+        return err;
+    }
 
-    "started"
+    "started".to_owned()
 }
 
 #[get("/stop")]
-async fn stop(db: &State<DB>) -> &'static str {
-    let mut engines = db.engines.lock().await;
-    if engines.len() == 0 {}
-
-    if let Some(mut eng) = engines.pop() {
-        eng.stop().unwrap();
-        return "stopped";
+async fn stop(mgr: &State<glib::Sender<ManagerEvent>>) -> String {
+    let (tx, rx) = oneshot::channel();
+    mgr.send(ManagerEvent::EngineStop(tx)).unwrap();
+    if let Err(err) = rx.await.unwrap() {
+        return err;
     }
 
-    "error: no engines running"
+    "stopped".to_owned()
 }
 
-fn web_init(ctx: glib::MainContext) {
+fn web_init(ctx: glib::MainContext, sender: glib::Sender<ManagerEvent>) {
     std::thread::spawn(|| {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             rocket::build()
-                .manage(DB {
-                    ctx: ctx,
-                    engines: Mutex::new(Vec::new()),
-                })
+                .manage(ctx)
+                .manage(sender)
                 .mount("/", routes![index, start, stop])
                 .launch()
                 .await
@@ -86,17 +115,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     pretty_env_logger::init();
     gst::init()?;
-    web_init(ctx.clone());
 
-    //    glib::timeout_add(
-    //        30000,
-    //        enc!( (main_loop) move || {
-    //            eng.stop().expect("error stopping engine");
-    //            main_loop.quit();
-    //
-    //            glib::Continue(false)
-    //        }),
-    //    );
+    let manager = Manager::new();
+    web_init(ctx.clone(), manager);
 
     ctrlc::set_handler(enc!( (main_loop) move || {
         main_loop.quit();

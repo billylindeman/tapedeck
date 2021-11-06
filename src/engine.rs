@@ -1,14 +1,15 @@
-use failure::Error;
+use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use gst::prelude::*;
 use headless_chrome::{Browser, LaunchOptions, Tab};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::io::{BufRead, BufReader};
 use std::result::Result;
 use std::sync::Arc;
 use std::time::Duration;
-use subprocess::{Exec, Popen};
+use subprocess::{Exec, Popen, Redirection};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, GetWindowAttributesReply};
 
@@ -40,10 +41,10 @@ pub struct EngineConfig {
 pub struct Engine {
     id: u32,
     ctx: glib::MainContext,
+    dbus: Popen,
     xvfb: Popen,
     pulse: Popen,
-    browser: Browser,
-    tab: Arc<Tab>,
+    browser: Option<Browser>,
     gst_encode: gst::Pipeline,
     gst_encode_eos_rx: mpsc::Receiver<bool>,
     gst_debug: gst::Pipeline,
@@ -54,11 +55,15 @@ impl Engine {
         let display: &str = &format!(":1{:0>4}", cfg.id);
         let pulse_server: &str = &format!("tcp:localhost:1{:0>4}", cfg.id);
 
+        info!("[Engine({})] Launching dbus-daemon", cfg.id);
+        let (dbus, dbus_session) = launch_dbus()?;
+        info!("[Engine({})] using dbus_session {:?}", cfg.id, dbus_session);
+
         info!("[Engine({})] Launching Xvfb", cfg.id);
-        let xvfb = launch_xvfb(display, cfg.size)?.popen()?;
+        let xvfb = launch_xvfb(&dbus_session, display, cfg.size)?;
 
         info!("[Engine({})] Launching PulseAudio", cfg.id);
-        let pulse = launch_pulse(cfg.id)?.popen()?;
+        let pulse = launch_pulse(&dbus_session, cfg.id)?;
 
         info!("[Engine({})] Launching Chromium", cfg.id);
         let (browser, tab) = launch_chromium_browser(display, pulse_server, &cfg.url)?;
@@ -79,21 +84,22 @@ impl Engine {
         Ok(Engine {
             id: cfg.id,
             ctx: cfg.glib_ctx,
+            dbus: dbus,
             xvfb: xvfb,
             pulse: pulse,
-            browser: browser,
-            tab: tab,
+            browser: Some(browser),
+            //        tab: tab,
             gst_encode: gst_encode,
             gst_encode_eos_rx: encode_eos_rx,
             gst_debug: gst_debug,
         })
     }
 
-    pub fn navigate(&mut self, url: &str) -> Result<(), Error> {
-        self.tab.navigate_to(url)?;
-        self.tab.wait_until_navigated()?;
-        Ok(())
-    }
+    //pub fn navigate(&mut self, url: &str) -> Result<(), Error> {
+    //    self.tab.navigate_to(url)?;
+    //    self.tab.wait_until_navigated()?;
+    //    Ok(())
+    //}
 
     pub fn stop(&mut self) -> Result<(), Error> {
         let rx = &mut self.gst_encode_eos_rx;
@@ -108,12 +114,19 @@ impl Engine {
         self.gst_debug.set_state(gst::State::Null)?;
         self.gst_encode.set_state(gst::State::Null)?;
 
+        let _ = self.browser.take();
+
         self.xvfb.terminate()?;
         self.xvfb.wait()?;
         info!("killed xvfb");
+
         self.pulse.terminate()?;
         self.pulse.wait()?;
         info!("killed pulse");
+
+        self.dbus.kill()?;
+        self.dbus.wait()?;
+        info!("killed dbus-daemon");
 
         Ok(())
     }
@@ -157,27 +170,66 @@ fn launch_chromium_browser(
     Ok((browser, tab))
 }
 
-fn launch_pulse(id: u32) -> Result<Exec, Error> {
-    Ok(Exec::shell(format!(
-        "dbus-run-session pulseaudio -n \
-        -vvv \
-        --system=false \
-        --daemonize=false \
-        --disable-shm \
-        --use-pid-file=false \
-        --realtime=false \
-        --load=\"module-null-sink sink_name=loopback\" \
-        --load=\"module-native-protocol-tcp port=1{:0>4} auth-anonymous=1\" \
-        ",
-        id
-    )))
+fn launch_pulse(dbus_session: &str, id: u32) -> Result<Popen, Error> {
+    let pulse = Exec::cmd("pulseaudio")
+        .arg("-n")
+        .arg("-vvvv")
+        .arg("--system=false")
+        .arg("--daemonize=false")
+        .arg("--disable-shm")
+        .arg("--use-pid-file=false")
+        .arg("--realtime=false")
+        .arg("--load=module-null-sink sink_name=loopback")
+        .arg(format!(
+            "--load=module-native-protocol-tcp port=1{:0>4} auth-anonymous=1",
+            id
+        ))
+        .env("DBUS_SESSION_BUS_ADDRESS", OsStr::new(dbus_session))
+        .env("DBUS_SESSION_BUS_PID", OsStr::new(""))
+        .env("DBUS_SESSION_BUS_WINDOWID", OsStr::new(""))
+        .env("DBUS_STARTER_ADDRESS", OsStr::new(""))
+        .env("DBUS_STARTER_BUS_TYPE", OsStr::new(""))
+        .popen()?;
+
+    Ok(pulse)
 }
 
-fn launch_xvfb(display: &str, size: (u32, u32)) -> Result<Exec, Error> {
-    Ok(Exec::shell(format!(
-        "Xvfb {} -screen 0 {}x{}x24",
-        display, size.0, size.1
-    )))
+pub fn launch_dbus() -> Result<(Popen, String), Error> {
+    let mut dbus = Exec::cmd("dbus-daemon")
+        .arg("--nofork")
+        .arg("--print-address")
+        .arg("--session")
+        .stdout(Redirection::Pipe)
+        .popen()?;
+
+    let mut dbus_stdout = String::new();
+    if let Some(ref mut stream) = dbus.stdout {
+        let mut buf = BufReader::new(stream);
+        buf.read_line(&mut dbus_stdout)?;
+    }
+
+    let dbus_session = dbus_stdout
+        .lines()
+        .next()
+        .ok_or(format_err!("couldn't extract dbus session from stdout"))?;
+
+    Ok((dbus, dbus_session.to_owned()))
+}
+
+fn launch_xvfb(dbus_session: &str, display: &str, size: (u32, u32)) -> Result<Popen, Error> {
+    let xvfb = Exec::cmd("Xvfb")
+        .arg(display)
+        .arg("-screen")
+        .arg("0")
+        .arg(format!("{}x{}x24", size.0, size.1))
+        .env("DBUS_SESSION_BUS_ADDRESS", OsStr::new(dbus_session))
+        .env("DBUS_SESSION_BUS_PID", OsStr::new(""))
+        .env("DBUS_SESSION_BUS_WINDOWID", OsStr::new(""))
+        .env("DBUS_STARTER_ADDRESS", OsStr::new(""))
+        .env("DBUS_STARTER_BUS_TYPE", OsStr::new(""))
+        .popen()?;
+
+    Ok(xvfb)
 }
 
 fn launch_gstreamer_debug(display: &str, pulse_server: &str) -> Result<gst::Pipeline, Error> {
