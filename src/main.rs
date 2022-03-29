@@ -61,7 +61,7 @@ fn index() -> &'static str {
     "hello"
 }
 
-#[get("/start/<id>")]
+#[post("/start/<id>")]
 async fn start(
     ctx: &State<glib::MainContext>,
     mgr: &State<glib::Sender<ManagerEvent>>,

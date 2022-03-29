@@ -42,11 +42,14 @@ pub fn run_record(url: String) -> Result<(), Error> {
         .build()
         .unwrap();
 
-    let eng = engine::Engine::new(cfg).unwrap();
-
     ctrlc::set_handler(enc!( (main_loop) move || {
         main_loop.quit();
     }))?;
+
+    {
+        let _eng = engine::Engine::new(cfg).unwrap();
+        main_loop.run();
+    }
 
     Ok(())
 }
@@ -65,4 +68,3 @@ pub fn main() -> Result<(), Error> {
 
     Ok(())
 }
-
