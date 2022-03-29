@@ -32,8 +32,10 @@ failure = "0.1.8"
 tokio = "1.12.0"
 
 
+clap = { version = "3.1.6", features = ["derive"] }
 
-#[[bin]]
-#name = "tapedeck"
-#path = "./bin/main.rs"
+
+[[bin]]
+name = "tapedeck"
+path = "./bin/main.rs"
 
