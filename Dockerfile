@@ -1,25 +1,38 @@
-FROM ubuntu:latest 
+FROM debian:latest 
 
 USER root
 ENV USER root
 ENV DEBIAN_FRONTEND noninteractive
 
+
 # Install package dependencies.
-RUN apt-get update \
-    && apt-get install -y \
+RUN apt update \
+    && apt install -y \
     apt-utils \
+    bash  \
     curl \
     gcc \
-    libgstreamer1.0-dev \
-    libgstreamer-plugins-base1.0-dev \
-    libgstreamer-plugins-good1.0-dev \
-    libgstreamer-plugins-bad1.0-dev \
     build-essential \
+    libssl-dev \
+    ca-certificates \
     xvfb \
     pulseaudio \
     dbus \
-    bash  \
+    dbus-user-session \
+    chromium \
     pkg-config \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libgstreamer-plugins-bad1.0-dev \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
+    gstreamer1.0-tools \
+    gstreamer1.0-x \
+    gstreamer1.0-gl \
+    gstreamer1.0-pulseaudio \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust
@@ -37,5 +50,9 @@ COPY . .
 RUN cargo build && \
     cargo install --path . 
 
-CMD ["/usr/local/cargo/bin/tapedeck"]
+EXPOSE 9222 
+
+
+ENV RUST_LOG debug
+CMD ["tapedeck", "record", "https://youtube.com"]
 

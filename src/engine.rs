@@ -160,6 +160,13 @@ fn launch_chromium_browser(
     args.push(OsStr::new("--enable-audio-output"));
     args.push(OsStr::new("--autoplay-policy=no-user-gesture-required"));
     args.push(OsStr::new("--kiosk"));
+    args.push(OsStr::new("--disable-dev-shm-usage"));
+    args.push(OsStr::new("--disable-gpu"));
+    args.push(OsStr::new("--disable-setuid-sandbox"));
+    args.push(OsStr::new("--remote-debugging-address=0.0.0.0"));
+    args.push(OsStr::new("--remote-debugging-port=9222"));
+    args.push(OsStr::new("--no-sandbox"));
+    args.push(OsStr::new("--enable-logging"));
     args.push(OsStr::new("--start-fullscreen"));
     info!("ENV: {:?}", env);
 
