@@ -2,8 +2,16 @@ use clap::Parser;
 use failure::Error;
 
 use enclose::enc;
-use log::*;
+use futures::channel::oneshot;
+use rocket::State;
 use tapedeck::engine;
+use tapedeck::*;
+use tokio::runtime::Runtime;
+
+#[macro_use]
+extern crate rocket;
+#[macro_use]
+extern crate derive_builder;
 
 #[derive(Parser, PartialEq, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -20,6 +28,32 @@ struct Cli {
 enum Sub {
     Record { url: String },
     Transcode {},
+}
+
+#[get("/stop")]
+async fn stop(mgr: &State<glib::Sender<ManagerEvent>>) -> String {
+    let (tx, rx) = oneshot::channel();
+    mgr.send(ManagerEvent::EngineStop(tx, 0)).unwrap();
+    if let Err(err) = rx.await.unwrap() {
+        return err;
+    }
+
+    "stopped".to_owned()
+}
+
+fn web_init(ctx: glib::MainContext, sender: glib::Sender<ManagerEvent>) {
+    std::thread::spawn(|| {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            rocket::build()
+                .manage(ctx)
+                .manage(sender)
+                .mount("/", routes![stop])
+                .launch()
+                .await
+                .expect("error in web server");
+        })
+    });
 }
 
 pub fn run_record(url: String) -> Result<(), Error> {
@@ -42,15 +76,18 @@ pub fn run_record(url: String) -> Result<(), Error> {
         .build()
         .unwrap();
 
+    let manager = Manager::new();
+
+    let (tx, rx) = oneshot::channel();
+    manager.send(ManagerEvent::EngineSpawn(tx, cfg)).unwrap();
+
+    web_init(ctx.clone(), manager);
+
     ctrlc::set_handler(enc!( (main_loop) move || {
         main_loop.quit();
     }))?;
 
-    {
-        let _eng = engine::Engine::new(cfg).unwrap();
-        main_loop.run();
-    }
-
+    main_loop.run();
     Ok(())
 }
 

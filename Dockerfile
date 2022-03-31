@@ -59,8 +59,9 @@ COPY . .
 
 RUN cargo install --path . 
 
-EXPOSE 9222 
+EXPOSE 8000
 ENV RUST_LOG debug
+ENV ROCKET_ADDRESS 0.0.0.0
 
 RUN cp /root/.cargo/bin/tapedeck /usr/bin
 USER tapedeck
