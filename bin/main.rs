@@ -30,24 +30,37 @@ enum Sub {
     Transcode {},
 }
 
+enum TapedeckEvent {
+    Shutdown,
+}
+
 #[get("/stop")]
-async fn stop(mgr: &State<glib::Sender<ManagerEvent>>) -> String {
+async fn stop(
+    mgr: &State<glib::Sender<ManagerEvent>>,
+    app_tx: &State<glib::Sender<TapedeckEvent>>,
+) -> String {
     let (tx, rx) = oneshot::channel();
     mgr.send(ManagerEvent::EngineStop(tx, 0)).unwrap();
     if let Err(err) = rx.await.unwrap() {
         return err;
     }
 
+    app_tx.send(TapedeckEvent::Shutdown);
     "stopped".to_owned()
 }
 
-fn web_init(ctx: glib::MainContext, sender: glib::Sender<ManagerEvent>) {
+fn web_init(
+    ctx: glib::MainContext,
+    mgr_sender: glib::Sender<ManagerEvent>,
+    app_sender: glib::Sender<TapedeckEvent>,
+) {
     std::thread::spawn(|| {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             rocket::build()
                 .manage(ctx)
-                .manage(sender)
+                .manage(mgr_sender)
+                .manage(app_sender)
                 .mount("/", routes![stop])
                 .launch()
                 .await
@@ -64,8 +77,6 @@ pub fn run_record(url: String) -> Result<(), Error> {
     pretty_env_logger::init();
     gst::init()?;
 
-    info!("creating engine");
-
     let cfg = engine::EngineConfigBuilder::default()
         .glib_ctx(ctx.clone())
         .id(0)
@@ -81,11 +92,22 @@ pub fn run_record(url: String) -> Result<(), Error> {
     let (tx, rx) = oneshot::channel();
     manager.send(ManagerEvent::EngineSpawn(tx, cfg)).unwrap();
 
-    web_init(ctx.clone(), manager);
+    let (app_tx, app_rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+    web_init(ctx.clone(), manager, app_tx);
 
     ctrlc::set_handler(enc!( (main_loop) move || {
         main_loop.quit();
     }))?;
+
+    app_rx.attach(
+        None,
+        enc!( (main_loop) move |msg| {
+            match msg {
+                TapedeckEvent::Shutdown => { main_loop.quit(); }
+            };
+            glib::Continue(true)
+        }),
+    );
 
     main_loop.run();
     Ok(())

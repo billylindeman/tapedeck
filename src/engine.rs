@@ -171,6 +171,7 @@ fn launch_chromium_browser(
     args.push(OsStr::new("--enable-audio-output"));
     args.push(OsStr::new("--autoplay-policy=no-user-gesture-required"));
     args.push(OsStr::new("--disable-features=ChromeWhatsNewUI"));
+    args.push(OsStr::new("--disable-infobars"));
     args.push(OsStr::new("--kiosk"));
     args.push(OsStr::new("--disable-dev-shm-usage"));
     args.push(OsStr::new("--disable-gpu"));
@@ -336,6 +337,7 @@ fn launch_gstreamer_encode(
     let video_convert = gst::ElementFactory::make("videoconvert", None)?;
     let video_enc = gst::ElementFactory::make("x264enc", None)?;
     video_enc.set_property_from_str("speed-preset", "ultrafast");
+    video_enc.set_property_from_str("bitrate", "8192");
 
     let mux = gst::ElementFactory::make("mp4mux", None)?;
 
