@@ -170,9 +170,13 @@ fn launch_chromium_browser(
     let mut args = Vec::new();
     args.push(OsStr::new("--enable-audio-output"));
     args.push(OsStr::new("--autoplay-policy=no-user-gesture-required"));
+    args.push(OsStr::new("--disable-features=ChromeWhatsNewUI"));
     args.push(OsStr::new("--kiosk"));
     args.push(OsStr::new("--disable-dev-shm-usage"));
     args.push(OsStr::new("--disable-gpu"));
+    args.push(OsStr::new("--disable-fre"));
+    args.push(OsStr::new("--no-default-browser-check"));
+    args.push(OsStr::new("--no-first-run"));
     args.push(OsStr::new("--use-gl=swiftshader"));
     args.push(OsStr::new("--disable-setuid-sandbox"));
     args.push(OsStr::new("--remote-debugging-address=0.0.0.0"));
@@ -193,6 +197,8 @@ fn launch_chromium_browser(
         .unwrap();
 
     let browser = Browser::new(options)?;
+
+    let _tab = browser.wait_for_initial_tab()?;
 
     let tab = browser.wait_for_initial_tab()?;
 

@@ -1,12 +1,15 @@
-FROM debian:latest 
+FROM ubuntu:latest 
 
 USER root
 ENV USER root
 ENV DEBIAN_FRONTEND noninteractive
 
 # Install package dependencies.
-RUN apt update \
-    && apt install -y \
+RUN apt-get update \
+    && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:saiarcot895/chromium-dev \
+    && apt-get update \
+    && apt-get install -y \
     apt-utils \
     bash  \
     curl \
@@ -18,7 +21,7 @@ RUN apt update \
     pulseaudio \
     dbus \
     dbus-user-session \
-    chromium \
+    chromium-browser \
     pkg-config \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
@@ -34,6 +37,10 @@ RUN apt update \
     gstreamer1.0-pulseaudio \
     && rm -rf /var/lib/apt/lists/*
 
+#Disable chrome first run
+RUN mkdir -p /etc/skel/.config/chromium/Default \
+    && touch "/etc/skel/.config/chromium/First Run" \
+    && echo '{ "browser": { "has_seen_welcome_page": true }}' > /etc/skel/.config/chromium/Default/Preferences
 
 RUN groupadd -g 2000 tapedeck \
 && useradd -m -u 2001 -g tapedeck tapedeck
@@ -57,6 +64,7 @@ ENV RUST_LOG debug
 
 RUN cp /root/.cargo/bin/tapedeck /usr/bin
 USER tapedeck
+
 
 CMD ["tapedeck", "record", "https://youtube.com"]
 
