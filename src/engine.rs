@@ -198,11 +198,9 @@ fn launch_chromium_browser(
 
     let browser = Browser::new(options)?;
 
-    let _tab = browser.wait_for_initial_tab()?;
-
     let tab = browser.wait_for_initial_tab()?;
 
-    // Navigate to wikipedia
+    // Navigate to recording
     tab.navigate_to(recording_url)?;
     tab.wait_until_navigated()?;
 
