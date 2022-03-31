@@ -37,7 +37,7 @@ pub fn run_record(url: String) -> Result<(), Error> {
         .id(0)
         .size((1920, 1080))
         .url(url)
-        .gst_debug(true)
+        .gst_debug(false)
         .encode_dir(Some("/tmp".to_string()))
         .build()
         .unwrap();

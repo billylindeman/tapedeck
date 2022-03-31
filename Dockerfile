@@ -4,7 +4,6 @@ USER root
 ENV USER root
 ENV DEBIAN_FRONTEND noninteractive
 
-
 # Install package dependencies.
 RUN apt update \
     && apt install -y \
@@ -35,6 +34,11 @@ RUN apt update \
     gstreamer1.0-pulseaudio \
     && rm -rf /var/lib/apt/lists/*
 
+
+RUN groupadd -g 2000 tapedeck \
+&& useradd -m -u 2001 -g tapedeck tapedeck
+
+
 # Install Rust
 RUN curl https://sh.rustup.rs -sSf > /tmp/rustup-init.sh \
     && chmod +x /tmp/rustup-init.sh \
@@ -42,17 +46,17 @@ RUN curl https://sh.rustup.rs -sSf > /tmp/rustup-init.sh \
     && rm -rf /tmp/rustup-init.sh
 
 ENV PATH="/root/.cargo/bin:${PATH}"
-
 WORKDIR /usr/src/app
 
 COPY . .
 
-RUN cargo build && \
-    cargo install --path . 
+RUN cargo install --path . 
 
 EXPOSE 9222 
-
-
 ENV RUST_LOG debug
+
+RUN cp /root/.cargo/bin/tapedeck /usr/bin
+USER tapedeck
+
 CMD ["tapedeck", "record", "https://youtube.com"]
 

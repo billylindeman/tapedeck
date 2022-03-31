@@ -75,7 +75,8 @@ impl Engine {
         let pulse = launch_pulse(&dbus_session, cfg.id)?;
 
         info!("[Engine({})] Launching Chromium", cfg.id);
-        let (browser, tab) = launch_chromium_browser(display, pulse_server, &cfg.url)?;
+        let (browser, tab) =
+            launch_chromium_browser(display, pulse_server, &cfg.url, &dbus_session)?;
 
         info!("[Engine({})] Launching Gstreamer Debug", cfg.id);
         let gst_debug = match cfg.gst_debug {
@@ -150,11 +151,21 @@ fn launch_chromium_browser(
     display: &str,
     pulse_server: &str,
     recording_url: &str,
+    dbus_session: &str,
 ) -> Result<(Browser, Arc<Tab>), Error> {
     let mut env = HashMap::new();
     env.insert("PULSE_SERVER".to_owned(), pulse_server.to_owned());
     env.insert("PULSE_SINK".to_owned(), "loopback".to_owned());
     env.insert("DISPLAY".to_owned(), display.to_owned());
+    env.insert(
+        "DBUS_SESSION_BUS_ADDRESS".to_owned(),
+        dbus_session.to_owned(),
+    );
+
+    env.insert("DBUS_SESSION_BUS_PID".to_owned(), "".to_owned());
+    env.insert("DBUS_SESSION_BUS_WINDOWID".to_owned(), "".to_owned());
+    env.insert("DBUS_STARTER_ADDRESS".to_owned(), "".to_owned());
+    env.insert("DBUS_STARTER_BUS_TYPE".to_owned(), "".to_owned());
 
     let mut args = Vec::new();
     args.push(OsStr::new("--enable-audio-output"));
@@ -162,6 +173,7 @@ fn launch_chromium_browser(
     args.push(OsStr::new("--kiosk"));
     args.push(OsStr::new("--disable-dev-shm-usage"));
     args.push(OsStr::new("--disable-gpu"));
+    args.push(OsStr::new("--use-gl=swiftshader"));
     args.push(OsStr::new("--disable-setuid-sandbox"));
     args.push(OsStr::new("--remote-debugging-address=0.0.0.0"));
     args.push(OsStr::new("--remote-debugging-port=9222"));
